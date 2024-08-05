@@ -1,13 +1,15 @@
 'use client'
 import React, { useState, useEffect } from 'react';
-import { Box, TextField, Typography, Button, Drawer, List, ListItem, ListItemText, ListItemIcon, Grid, Card, CardContent, CardMedia, Snackbar, IconButton } from '@mui/material';
-import { Home as HomeIcon, Inventory as InventoryIcon, Add as AddIcon, Menu as MenuIcon, Close as CloseIcon, Reddit } from '@mui/icons-material';
-import { Facebook, LinkedIn, YouTube, Twitter } from '@mui/icons-material';
+import { Box, TextField, Typography, Button, Drawer, List, ListItem, ListItemText, ListItemIcon, Grid, Card, CardContent, Snackbar, IconButton, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
+import { Home as HomeIcon, Inventory as InventoryIcon, Add as AddIcon, Menu as MenuIcon, Close as CloseIcon, Restaurant as RecipeIcon } from '@mui/icons-material';
+import { Reddit, LinkedIn, YouTube, Twitter } from '@mui/icons-material';
 import { collection, getDocs, query, setDoc, deleteDoc, getDoc, doc, updateDoc } from "firebase/firestore";
 import { firestore, auth } from "@/firebase";
 import ImageCapture from "@/components/ImageCapture";
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import CursorFollower from "../components/CursorFollower";
+import ImageFetcher from '../components/ImageFetcher';
+import RecipeGenerator from '../components/RecipeGenerator';
 
 export default function Home() {
   const [inventory, setInventory] = useState([]);
@@ -21,13 +23,20 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
-  const [theme, setTheme] = useState('light'); 
-  
+  const [theme, setTheme] = useState('light');
+  const [recipes, setRecipes] = useState([]);
+  const [recipeDialogOpen, setRecipeDialogOpen] = useState(false);
+  const [selectedIngredients, setSelectedIngredients] = useState([]);
+  const [selectedRecipe, setSelectedRecipe] = useState(null);
+
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged((user) => {
       setUser(user);
       if (user) {
         updateInventory();
+      } else {
+        setInventory([]);
+        setRecipes([]);
       }
     });
     return () => unsubscribe();
@@ -43,10 +52,10 @@ export default function Home() {
 
   const updateInventory = async () => {
     if (!user) return;
-    const snapshot = query(collection(firestore, 'inventory'));
-    const docs = await getDocs(snapshot);
+    const inventoryRef = collection(firestore, `users/${user.uid}/inventory`);
+    const snapshot = await getDocs(inventoryRef);
     const inventoryList = [];
-    docs.forEach((doc) => {
+    snapshot.forEach((doc) => {
       inventoryList.push({
         name: doc.id,
         ...doc.data(),
@@ -55,42 +64,20 @@ export default function Home() {
     setInventory(inventoryList);
   };
 
-  const removeItem = async (item) => {
-    if (!user) return;
-    try {
-      const docRef = doc(firestore, "inventory", item);
-      const docSnap = await getDoc(docRef);
-
-      if (docSnap.exists()) {
-        const { quantity } = docSnap.data();
-        if (quantity <= 1) {
-          await deleteDoc(docRef);
-        } else {
-          await updateDoc(docRef, { quantity: quantity - 1 });
-        }
-      }
-
-      await updateInventory();
-      setSnackbarMessage(`Removed one ${item}`);
-      setSnackbarOpen(true);
-    } catch (error) {
-      console.error("Error removing item:", error);
-    }
-  };
-
   const addItem = async () => {
     if (!user || !itemName.trim()) return;
     try {
-      const docRef = doc(firestore, "inventory", itemName.trim());
-      const docSnap = await getDoc(docRef);
-
-      if (docSnap.exists()) {
-        const { quantity } = docSnap.data();
-        await updateDoc(docRef, { quantity: quantity + itemQuantity });
+      const inventoryRef = collection(firestore, `users/${user.uid}/inventory`);
+      const itemRef = doc(inventoryRef, itemName.trim());
+      const itemSnap = await getDoc(itemRef);
+  
+      if (itemSnap.exists()) {
+        const { quantity } = itemSnap.data();
+        await updateDoc(itemRef, { quantity: quantity + itemQuantity });
       } else {
-        await setDoc(docRef, { quantity: itemQuantity });
+        await setDoc(itemRef, { quantity: itemQuantity });
       }
-
+  
       await updateInventory();
       setItemName("");
       setItemQuantity(1);
@@ -98,6 +85,30 @@ export default function Home() {
       setSnackbarOpen(true);
     } catch (error) {
       console.error("Error adding item:", error);
+    }
+  };
+  
+  const removeItem = async (item) => {
+    if (!user) return;
+    try {
+      const inventoryRef = collection(firestore, `users/${user.uid}/inventory`);
+      const itemRef = doc(inventoryRef, item);
+      const itemSnap = await getDoc(itemRef);
+  
+      if (itemSnap.exists()) {
+        const { quantity } = itemSnap.data();
+        if (quantity <= 1) {
+          await deleteDoc(itemRef);
+        } else {
+          await updateDoc(itemRef, { quantity: quantity - 1 });
+        }
+      }
+  
+      await updateInventory();
+      setSnackbarMessage(`Removed one ${item}`);
+      setSnackbarOpen(true);
+    } catch (error) {
+      console.error("Error removing item:", error);
     }
   };
 
@@ -123,15 +134,83 @@ export default function Home() {
     }
   };
 
+  const generateRecipe = async () => {
+    if (selectedIngredients.length === 0) {
+      setSnackbarMessage("Please select at least one ingredient");
+      setSnackbarOpen(true);
+      return;
+    }
+    
+    const newRecipe = await RecipeGenerator.generateRecipe(selectedIngredients);
+    if (newRecipe) {
+      setRecipes(prevRecipes => [...prevRecipes, newRecipe]);
+      setSelectedRecipe(newRecipe);
+    } else {
+      setSnackbarMessage("Couldn't generate a recipe with the selected ingredients");
+      setSnackbarOpen(true);
+    }
+    setRecipeDialogOpen(false);
+  };
+
+  const RecipeDialog = () => {
+    if (!selectedRecipe) return null;
+  
+    return (
+      <Dialog open={!!selectedRecipe} onClose={() => setSelectedRecipe(null)} maxWidth="md" fullWidth>
+        <DialogTitle>{selectedRecipe.name}</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={6}>
+              <ImageFetcher itemName={selectedRecipe.name} width={400} height={300} />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Typography variant="h6" sx={{ mb: 2 }}>Ingredients:</Typography>
+              <ul>
+                {selectedRecipe.ingredients.map((ingredient, index) => (
+                  <li key={index}>{ingredient}</li>
+                ))}
+              </ul>
+              <Typography variant="h6" sx={{ mt: 3, mb: 2 }}>Instructions:</Typography>
+              <ol>
+                {selectedRecipe.instructions.map((step, index) => (
+                  <li key={index}>{step}</li>
+                ))}
+              </ol>
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSelectedRecipe(null)}>Close</Button>
+          <Button onClick={() => removeRecipe(selectedRecipe)}>Remove</Button>
+        </DialogActions>
+      </Dialog>
+    );
+  };
+  
+  const removeRecipe = (recipe) => {
+    setRecipes(recipes.filter((r) => r !== recipe));
+    setSelectedRecipe(null);
+  };
+
   const renderContent = () => {
     switch (activePage) {
       case 'home':
         return (
           <Box sx={{ p: 3, textAlign: 'center' }}>
-            <Typography variant="h2" sx={{ mb: 2, fontWeight: 'bold' }}>Level-up your work and life</Typography>
+            <Typography variant="h2" sx={{ mb: 2, fontWeight: 'bold' }}>Welcome to Laventory</Typography>
+            <Typography variant="h4" sx={{ mb: 2, fontWeight: 'bold' }}>Revolutionize Your Inventory Management</Typography>
             <Typography variant="body1" sx={{ mb: 4 }}>
-              Follow our socials for career advice, jobseeker tips and savings hacks to make life easy 🌴.
+              Laventory is where managing your inventory becomes a seamless and enjoyable experience. Designed for modern businesses, Laventory combines cutting-edge technology with an intuitive interface to help you streamline your operations and stay ahead in the competitive market.
             </Typography>
+            <Button 
+              variant="contained" 
+              color="primary" 
+              size="large" 
+              onClick={() => setActivePage('addItems')}
+              sx={{ mb: 4 }}
+            >
+              Get Started
+            </Button>
             <Grid container spacing={2} justifyContent="center">
               {[
                 { name: 'Reddit', icon: Reddit, color: '#FF4500', link: 'https://www.reddit.com/lamalhasang/' },
@@ -142,7 +221,7 @@ export default function Home() {
                 <Grid item key={social.name}>
                   <IconButton
                     component="a"
-                    href={`https://www.${social.name.toLowerCase()}.com`}
+                    href={social.link}
                     target="_blank"
                     rel="noopener noreferrer"
                     sx={{
@@ -179,12 +258,7 @@ export default function Home() {
               {filteredInventory.map(({ name, quantity }) => (
                 <Grid item xs={12} sm={6} md={4} key={name}>
                   <Card sx={{ transition: 'transform 0.3s', '&:hover': { transform: 'scale(1.05)' } }}>
-                    <CardMedia
-                      component="img"
-                      height="140"
-                      image={`/api/placeholder/400/320?text=${encodeURIComponent(name)}`}
-                      alt={name}
-                    />
+                    <ImageFetcher itemName={name} width={400} height={200} />
                     <CardContent>
                       <Typography variant="h6">{name}</Typography>
                       <Typography variant="body2">Quantity: {quantity}</Typography>
@@ -216,7 +290,7 @@ export default function Home() {
               variant="outlined"
               type="number"
               value={itemQuantity}
-              onChange={(e) => setItemQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+              onChange={(e) => setItemQuantity(parseInt(e.target.value))}
               placeholder="Enter quantity"
               sx={{ mb: 2 }}
             />
@@ -233,6 +307,28 @@ export default function Home() {
             {showImageCapture && (
               <ImageCapture onItemDetected={handleItemDetected} />
             )}
+          </Box>
+        );
+      case 'recipes':
+        return (
+          <Box sx={{ p: 3 }}>
+            <Typography variant="h4" sx={{ mb: 3 }}>Recipe Generator</Typography>
+            <Button variant="contained" onClick={() => setRecipeDialogOpen(true)} sx={{ mb: 3 }}>
+              Generate Recipe
+            </Button>
+            <Grid container spacing={3}>
+              {recipes.map((recipe, index) => (
+                <Grid item xs={12} sm={6} md={4} key={index}>
+                  <Card onClick={() => setSelectedRecipe(recipe)} sx={{ cursor: 'pointer', borderRadius: '16px', overflow: 'hidden' }}>
+                    <ImageFetcher itemName={recipe.name} width={400} height={200} />
+                    <CardContent>
+                      <Typography variant="h6">{recipe.name}</Typography>
+                      <Typography variant="body2">{recipe.description}</Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              ))}
+            </Grid>
           </Box>
         );
       default:
@@ -272,6 +368,10 @@ export default function Home() {
             <ListItem button onClick={() => { setActivePage('addItems'); setDrawerOpen(false); }}>
               <ListItemIcon><AddIcon sx={{ color: 'white' }} /></ListItemIcon>
               <ListItemText primary="Add Items" />
+            </ListItem>
+            <ListItem button onClick={() => { setActivePage('recipes'); setDrawerOpen(false); }}>
+              <ListItemIcon><RecipeIcon sx={{ color: 'white' }} /></ListItemIcon>
+              <ListItemText primary="Recipes" />
             </ListItem>
           </List>
           <Box sx={{ position: 'absolute', bottom: 16, width: '100%' }}>
@@ -319,6 +419,36 @@ export default function Home() {
           </IconButton>
         }
       />
+
+      <Dialog open={recipeDialogOpen} onClose={() => setRecipeDialogOpen(false)}>
+        <DialogTitle>Generate Recipe</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ mb: 2 }}>Select ingredients:</Typography>
+          <Grid container spacing={1}>
+            {inventory.map((item) => (
+              <Grid item key={item.name}>
+                <Button
+                  variant={selectedIngredients.includes(item.name) ? "contained" : "outlined"}
+                  onClick={() => {
+                    setSelectedIngredients(prev => 
+                      prev.includes(item.name) 
+                        ? prev.filter(i => i !== item.name)
+                        : [...prev, item.name]
+                    );
+                  }}
+                >
+                  {item.name}
+                </Button>
+              </Grid>
+            ))}
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRecipeDialogOpen(false)}>Cancel</Button>
+          <Button onClick={generateRecipe} variant="contained">Generate Recipe</Button>
+        </DialogActions>
+      </Dialog>
+      <RecipeDialog />
     </Box>
   );
 }
