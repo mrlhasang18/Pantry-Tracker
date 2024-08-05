@@ -1,3 +1,4 @@
+'use client'
 const RecipeGenerator = {
   generateRecipe: async (ingredients) => {
     const API_KEY = process.env.REACT_APP_RECIPE_API_KEY;
