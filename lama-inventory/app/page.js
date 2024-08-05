@@ -8,8 +8,8 @@ import { firestore, auth } from "@/firebase";
 import ImageCapture from "@/components/ImageCapture";
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import CursorFollower from "../components/CursorFollower";
-import ImageFetcher from '../components/ImageFetcher';
 import RecipeGenerator from '../components/RecipeGenerator';
+
 
 export default function Home() {
   const [inventory, setInventory] = useState([]);
@@ -64,25 +64,31 @@ export default function Home() {
     setInventory(inventoryList);
   };
 
-  const addItem = async () => {
-    if (!user || !itemName.trim()) return;
+  const addItem = async (nameToAdd, quantityToAdd) => {
+    if (!user) return;
+    const itemNameToAdd = nameToAdd || itemName.trim();
+    const itemQuantityToAdd = parseInt(quantityToAdd) || parseInt(itemQuantity);
+  
+    if (!itemNameToAdd || isNaN(itemQuantityToAdd)) return;
+  
     try {
       const inventoryRef = collection(firestore, `users/${user.uid}/inventory`);
-      const itemRef = doc(inventoryRef, itemName.trim());
+      const itemRef = doc(inventoryRef, itemNameToAdd);
       const itemSnap = await getDoc(itemRef);
   
       if (itemSnap.exists()) {
         const { quantity } = itemSnap.data();
-        await updateDoc(itemRef, { quantity: quantity + itemQuantity });
+        await updateDoc(itemRef, { quantity: quantity + itemQuantityToAdd });
       } else {
-        await setDoc(itemRef, { quantity: itemQuantity });
+        await setDoc(itemRef, { quantity: itemQuantityToAdd });
       }
   
       await updateInventory();
+      setSnackbarMessage(`Added ${itemQuantityToAdd} ${itemNameToAdd}`);
+      setSnackbarOpen(true);
+      
       setItemName("");
       setItemQuantity(1);
-      setSnackbarMessage(`Added ${itemQuantity} ${itemName}`);
-      setSnackbarOpen(true);
     } catch (error) {
       console.error("Error adding item:", error);
     }
@@ -143,14 +149,21 @@ export default function Home() {
     
     const newRecipe = await RecipeGenerator.generateRecipe(selectedIngredients);
     if (newRecipe) {
-      setRecipes(prevRecipes => [...prevRecipes, newRecipe]);
-      setSelectedRecipe(newRecipe);
+      const existingRecipe = recipes.find(r => r.name === newRecipe.name);
+      if (existingRecipe) {
+        setSnackbarMessage(`Recipe "${newRecipe.name}" already exists in your recipes.`);
+        setSnackbarOpen(true);
+      } else {
+        setRecipes(prevRecipes => [...prevRecipes, newRecipe]);
+        setSelectedRecipe(newRecipe);
+      }
     } else {
       setSnackbarMessage("Couldn't generate a recipe with the selected ingredients");
       setSnackbarOpen(true);
     }
     setRecipeDialogOpen(false);
   };
+
 
   const RecipeDialog = () => {
     if (!selectedRecipe) return null;
@@ -160,10 +173,7 @@ export default function Home() {
         <DialogTitle>{selectedRecipe.name}</DialogTitle>
         <DialogContent>
           <Grid container spacing={3}>
-            <Grid item xs={12} md={6}>
-              <ImageFetcher itemName={selectedRecipe.name} width={400} height={300} />
-            </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12}>
               <Typography variant="h6" sx={{ mb: 2 }}>Ingredients:</Typography>
               <ul>
                 {selectedRecipe.ingredients.map((ingredient, index) => (
@@ -186,6 +196,7 @@ export default function Home() {
       </Dialog>
     );
   };
+
   
   const removeRecipe = (recipe) => {
     setRecipes(recipes.filter((r) => r !== recipe));
@@ -213,8 +224,8 @@ export default function Home() {
             </Button>
             <Grid container spacing={2} justifyContent="center">
               {[
-                { name: 'Reddit', icon: Reddit, color: '#FF4500', link: 'https://www.reddit.com/lamalhasang/' },
-                { name: 'LinkedIn', icon: LinkedIn, color: '#0A66C2', link: 'https://www.linkedin.com/tulku18/' },
+                { name: 'Reddit', icon: Reddit, color: '#FF4500', link: 'https://www.reddit.com/user/lamalhasang/' },
+                { name: 'LinkedIn', icon: LinkedIn, color: '#0A66C2', link: 'https://www.linkedin.com/in/tulku18/' },
                 { name: 'YouTube', icon: YouTube, color: '#FF0000', link: 'https://www.youtube.com/@lhasanglama8171' },
                 { name: 'Twitter', icon: Twitter, color: '#1DA1F2', link: 'https://x.com/tulku14383' },
               ].map((social) => (
@@ -239,76 +250,78 @@ export default function Home() {
             </Grid>
           </Box>
         );
-      case 'inventory':
-        return (
-          <Box sx={{ p: 3 }}>
-            <TextField
-              fullWidth
-              variant="outlined"
-              placeholder="Search inventory..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              sx={{ mb: 3 }}
-            />
-            <Typography variant="h4" sx={{ mb: 2 }}>Laventory</Typography>
-            <Typography variant="body1" sx={{ mb: 3 }}>
-              Your smart inventory management solution
-            </Typography>
-            <Grid container spacing={3}>
-              {filteredInventory.map(({ name, quantity }) => (
-                <Grid item xs={12} sm={6} md={4} key={name}>
-                  <Card sx={{ transition: 'transform 0.3s', '&:hover': { transform: 'scale(1.05)' } }}>
-                    <ImageFetcher itemName={name} width={400} height={200} />
-                    <CardContent>
-                      <Typography variant="h6">{name}</Typography>
-                      <Typography variant="body2">Quantity: {quantity}</Typography>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
-                        <Button size="small" onClick={() => removeItem(name)}>Remove</Button>
-                        <Button size="small" onClick={() => addItem(name, 1)}>Add</Button>
-                      </Box>
-                    </CardContent>
-                  </Card>
-                </Grid>
-              ))}
-            </Grid>
-          </Box>
-        );
-      case 'addItems':
-        return (
-          <Box sx={{ p: 3 }}>
-            <Typography variant="h4" sx={{ mb: 3 }}>Add Items</Typography>
-            <TextField
-              fullWidth
-              variant="outlined"
-              value={itemName}
-              onChange={(e) => setItemName(e.target.value)}
-              placeholder="Enter item name"
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              fullWidth
-              variant="outlined"
-              type="number"
-              value={itemQuantity}
-              onChange={(e) => setItemQuantity(parseInt(e.target.value))}
-              placeholder="Enter quantity"
-              sx={{ mb: 2 }}
-            />
-            <Button 
-              variant="contained" 
-              onClick={addItem} 
-              sx={{ mr: 2 }}
-            >
-              Add Item
-            </Button>
-            <Button variant="outlined" onClick={() => setShowImageCapture(true)}>
-              Add with Camera
-            </Button>
-            {showImageCapture && (
-              <ImageCapture onItemDetected={handleItemDetected} />
-            )}
-          </Box>
-        );
+        case 'inventory':
+          return (
+            <Box sx={{ p: 3 }}>
+              <TextField
+                fullWidth
+                variant="outlined"
+                placeholder="Search inventory..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                sx={{ mb: 3 }}
+              />
+              <Typography variant="h4" sx={{ mb: 2 }}>Laventory</Typography>
+              <Typography variant="body1" sx={{ mb: 3 }}>
+                Your smart inventory management solution
+              </Typography>
+              <Grid container spacing={3}>
+                {filteredInventory.map(({ name, quantity }) => (
+                  <Grid item xs={12} sm={6} md={4} key={name}>
+                    <Card sx={{ transition: 'transform 0.3s', '&:hover': { transform: 'scale(1.05)' } }}>
+                      <CardContent>
+                        <Typography variant="h6">{name}</Typography>
+                        <Typography variant="body2">Quantity: {quantity}</Typography>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
+                          <Button size="small" onClick={() => removeItem(name)}>Remove</Button>
+                          <Button size="small" onClick={() => addItem(name, 1)}>Add</Button>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                ))}
+              </Grid>
+            </Box>
+          );
+
+          case 'addItems':
+            return (
+              <Box sx={{ p: 3 }}>
+                <Typography variant="h4" sx={{ mb: 3 }}>Add Items</Typography>
+                <TextField
+                  fullWidth
+                  variant="outlined"
+                  value={itemName}
+                  onChange={(e) => setItemName(e.target.value)}
+                  placeholder="Enter item name"
+                  sx={{ mb: 2 }}
+                />
+                <TextField
+                  fullWidth
+                  variant="outlined"
+                  type="number"
+                  value={itemQuantity}
+                  onChange={(e) => setItemQuantity(e.target.value)}
+                  placeholder="Enter quantity"
+                  sx={{ mb: 2 }}
+                />
+                <Button 
+                  variant="contained" 
+                  onClick={() => addItem()}
+                  sx={{ mr: 2 }}
+                >
+                  Add Item
+                </Button>
+                <Button variant="outlined" onClick={() => setShowImageCapture(true)}>
+                  Add with Camera
+                </Button>
+                {showImageCapture && (
+                  <ImageCapture onItemDetected={handleItemDetected} />
+                )}
+              </Box>
+            );
+
+            
       case 'recipes':
         return (
           <Box sx={{ p: 3 }}>
@@ -320,7 +333,6 @@ export default function Home() {
               {recipes.map((recipe, index) => (
                 <Grid item xs={12} sm={6} md={4} key={index}>
                   <Card onClick={() => setSelectedRecipe(recipe)} sx={{ cursor: 'pointer', borderRadius: '16px', overflow: 'hidden' }}>
-                    <ImageFetcher itemName={recipe.name} width={400} height={200} />
                     <CardContent>
                       <Typography variant="h6">{recipe.name}</Typography>
                       <Typography variant="body2">{recipe.description}</Typography>
@@ -331,6 +343,7 @@ export default function Home() {
             </Grid>
           </Box>
         );
+
       default:
         return null;
     }
