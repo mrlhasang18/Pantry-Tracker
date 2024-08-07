@@ -68,6 +68,7 @@ export default function RootLayout({ children }) {
           </Box>
         </ThemeProvider>
       </body>
+      <Analytics/>
     </html>
   );
 }
